@@ -23,6 +23,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kr.bluevisor.applens.model.AppInfo
 import kr.bluevisor.applens.model.AppType
+import kr.bluevisor.applens.ui.components.AdMobBottomBanner
 import kr.bluevisor.applens.viewmodel.AppDetailViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -68,40 +69,45 @@ fun AppDetailScreen(
                 }
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                item {
-                    AppDetailHeader(appInfo = appInfo)
+            Column {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item {
+                        AppDetailHeader(appInfo = appInfo)
+                    }
+                    
+                    analysis?.let { appAnalysis ->
+                        item {
+                            AnalysisResultCard(appAnalysis = appAnalysis)
+                        }
+                        
+                        item {
+                            FrameworksCard(frameworks = appAnalysis.detectedFrameworks)
+                        }
+                        
+                        if (appAnalysis.nativeLibraries.isNotEmpty()) {
+                            item {
+                                NativeLibrariesCard(libraries = appAnalysis.nativeLibraries)
+                            }
+                        }
+                        
+                        if (appAnalysis.usedLibraries.isNotEmpty()) {
+                            item {
+                                UsedLibrariesCard(libraries = appAnalysis.usedLibraries, appType = appAnalysis.appInfo.appType)
+                            }
+                        }
+                        
+                        item {
+                            PermissionsCard(permissions = appAnalysis.permissions)
+                        }
+                    }
                 }
                 
-                analysis?.let { appAnalysis ->
-                    item {
-                        AnalysisResultCard(appAnalysis = appAnalysis)
-                    }
-                    
-                    item {
-                        FrameworksCard(frameworks = appAnalysis.detectedFrameworks)
-                    }
-                    
-                    if (appAnalysis.nativeLibraries.isNotEmpty()) {
-                        item {
-                            NativeLibrariesCard(libraries = appAnalysis.nativeLibraries)
-                        }
-                    }
-                    
-                    if (appAnalysis.usedLibraries.isNotEmpty()) {
-                        item {
-                            UsedLibrariesCard(libraries = appAnalysis.usedLibraries, appType = appAnalysis.appInfo.appType)
-                        }
-                    }
-                    
-                    item {
-                        PermissionsCard(permissions = appAnalysis.permissions)
-                    }
-                }
+                // Bottom Ad Banner
+                AdMobBottomBanner()
             }
         }
     }

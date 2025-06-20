@@ -10,6 +10,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import com.google.android.gms.ads.MobileAds
 import kr.bluevisor.applens.model.AppInfo
 import kr.bluevisor.applens.ui.screen.AppDetailScreen
 import kr.bluevisor.applens.ui.screen.AppListScreen
@@ -19,6 +20,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // Initialize AdMob
+        MobileAds.initialize(this) {}
+        
         setContent {
             AppLensTheme {
                 Surface(

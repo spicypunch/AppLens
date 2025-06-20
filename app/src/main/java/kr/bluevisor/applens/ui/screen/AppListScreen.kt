@@ -23,6 +23,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kr.bluevisor.applens.model.AppInfo
 import kr.bluevisor.applens.model.AppType
+import kr.bluevisor.applens.ui.components.AdMobBottomBanner
 import kr.bluevisor.applens.ui.components.AppCountIndicator
 import kr.bluevisor.applens.ui.components.SearchAndFilterBar
 import kr.bluevisor.applens.viewmodel.AppListViewModel
@@ -79,7 +80,7 @@ fun AppListScreen(
                 )
                 
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -90,6 +91,9 @@ fun AppListScreen(
                         )
                     }
                 }
+                
+                // Bottom Ad Banner
+                AdMobBottomBanner()
             }
         }
     }
