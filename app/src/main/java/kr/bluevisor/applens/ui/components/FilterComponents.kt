@@ -26,7 +26,6 @@ fun SearchAndFilterBar(
     modifier: Modifier = Modifier
 ) {
     var showSortMenu by remember { mutableStateOf(false) }
-    var showFilterMenu by remember { mutableStateOf(false) }
     
     Column(
         modifier = modifier.padding(16.dp)
@@ -77,32 +76,6 @@ fun SearchAndFilterBar(
                 }
             }
             
-            // Filter Button
-            FilterChip(
-                onClick = { showFilterMenu = true },
-                label = { Text("Filter: ${getAppFilterLabel(filterState.appFilter)}") },
-                selected = filterState.appFilter != AppFilter.ALL,
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.secondary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onSecondary
-                )
-            )
-            
-            // Filter Menu
-            DropdownMenu(
-                expanded = showFilterMenu,
-                onDismissRequest = { showFilterMenu = false }
-            ) {
-                AppFilter.entries.forEach { appFilter ->
-                    DropdownMenuItem(
-                        text = { Text(getAppFilterLabel(appFilter)) },
-                        onClick = {
-                            onAppFilterChange(appFilter)
-                            showFilterMenu = false
-                        }
-                    )
-                }
-            }
         }
         
         // Quick Filter Chips
