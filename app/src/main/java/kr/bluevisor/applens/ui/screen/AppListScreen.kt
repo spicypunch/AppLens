@@ -4,7 +4,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
@@ -41,9 +43,22 @@ fun AppListScreen(
     val allApps by viewModel.allApps.collectAsState()
     val filterState by viewModel.filterState.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val scrollPosition by viewModel.scrollPosition.collectAsState()
+    
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = scrollPosition
+    )
     
     LaunchedEffect(context) {
-        viewModel.loadApps(context)
+        if (allApps.isEmpty() && !isLoading) {
+            viewModel.loadApps(context)
+        }
+    }
+    
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.updateScrollPosition(listState.firstVisibleItemIndex)
+        }
     }
     
     Column(
@@ -80,6 +95,7 @@ fun AppListScreen(
                 )
                 
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)

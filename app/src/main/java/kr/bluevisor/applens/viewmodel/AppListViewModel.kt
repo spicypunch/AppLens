@@ -27,6 +27,9 @@ class AppListViewModel : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
     
+    private val _scrollPosition = MutableStateFlow(0)
+    val scrollPosition: StateFlow<Int> = _scrollPosition.asStateFlow()
+    
     val apps: StateFlow<List<AppInfo>> = combine(
         _allApps,
         _filterState
@@ -66,6 +69,10 @@ class AppListViewModel : ViewModel() {
     
     fun updateSearchQuery(query: String) {
         _filterState.value = _filterState.value.copy(searchQuery = query)
+    }
+    
+    fun updateScrollPosition(position: Int) {
+        _scrollPosition.value = position
     }
     
     private fun filterAndSortApps(apps: List<AppInfo>, filterState: FilterState): List<AppInfo> {
