@@ -2,16 +2,38 @@ package kr.bluevisor.applens.ui.screen
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,7 +52,8 @@ import kr.bluevisor.applens.ui.components.AppCountIndicator
 import kr.bluevisor.applens.ui.components.SearchAndFilterBar
 import kr.bluevisor.applens.viewmodel.AppListViewModel
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,23 +67,23 @@ fun AppListScreen(
     val filterState by viewModel.filterState.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val scrollPosition by viewModel.scrollPosition.collectAsState()
-    
+
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = scrollPosition
     )
-    
+
     LaunchedEffect(context) {
         if (allApps.isEmpty() && !isLoading) {
             viewModel.loadApps(context)
         }
     }
-    
+
     DisposableEffect(Unit) {
         onDispose {
             viewModel.updateScrollPosition(listState.firstVisibleItemIndex)
         }
     }
-    
+
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -72,7 +95,7 @@ fun AppListScreen(
                 )
             }
         )
-        
+
         if (isLoading) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -88,12 +111,12 @@ fun AppListScreen(
                     onSortOrderChange = viewModel::updateSortOrder,
                     onAppFilterChange = viewModel::updateAppFilter
                 )
-                
+
                 AppCountIndicator(
                     totalCount = allApps.size,
                     filteredCount = apps.size
                 )
-                
+
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f),
@@ -107,7 +130,7 @@ fun AppListScreen(
                         )
                     }
                 }
-                
+
                 // Bottom Ad Banner
                 AdMobBottomBanner()
             }
@@ -150,9 +173,9 @@ fun AppListItem(
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
-            
+
             Spacer(modifier = Modifier.width(16.dp))
-            
+
             // App Info
             Column(
                 modifier = Modifier.weight(1f)
@@ -164,7 +187,7 @@ fun AppListItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                
+
                 Text(
                     text = app.packageName,
                     style = MaterialTheme.typography.bodySmall,
@@ -172,13 +195,13 @@ fun AppListItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     AppTypeChip(appType = app.appType)
-                    
+
                     if (app.isSystemApp) {
                         AssistChip(
                             onClick = { },
@@ -190,7 +213,7 @@ fun AppListItem(
                     }
                 }
             }
-            
+
             // Version and Date
             Column(
                 horizontalAlignment = Alignment.End
@@ -200,7 +223,7 @@ fun AppListItem(
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium
                 )
-                
+
                 Text(
                     text = formatDate(app.updateTime),
                     style = MaterialTheme.typography.labelSmall,
@@ -224,15 +247,15 @@ fun AppTypeChip(appType: AppType) {
         AppType.UNITY -> "Unity" to Color(0xFF000000)
         AppType.UNKNOWN -> "Unknown" to Color(0xFF757575)
     }
-    
+
     AssistChip(
         onClick = { },
-        label = { 
+        label = {
             Text(
-                text = text, 
+                text = text,
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.White
-            ) 
+            )
         },
         colors = AssistChipDefaults.assistChipColors(
             containerColor = color

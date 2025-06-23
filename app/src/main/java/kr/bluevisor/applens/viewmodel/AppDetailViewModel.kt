@@ -13,17 +13,17 @@ import kr.bluevisor.applens.model.AppAnalysis
 import kr.bluevisor.applens.model.AppInfo
 
 class AppDetailViewModel : ViewModel() {
-    
+
     private val _analysis = MutableStateFlow<AppAnalysis?>(null)
     val analysis: StateFlow<AppAnalysis?> = _analysis.asStateFlow()
-    
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-    
+
     fun analyzeApp(context: Context, appInfo: AppInfo) {
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
-            
+
             try {
                 val analyzer = AppAnalyzer(context)
                 val result = analyzer.analyzeApp(appInfo)

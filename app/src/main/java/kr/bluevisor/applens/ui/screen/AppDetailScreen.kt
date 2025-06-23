@@ -1,15 +1,40 @@
 package kr.bluevisor.applens.ui.screen
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,7 +51,8 @@ import kr.bluevisor.applens.model.AppType
 import kr.bluevisor.applens.ui.components.AdMobBottomBanner
 import kr.bluevisor.applens.viewmodel.AppDetailViewModel
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,11 +64,11 @@ fun AppDetailScreen(
     val context = LocalContext.current
     val analysis by viewModel.analysis.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
-    
+
     LaunchedEffect(appInfo) {
         viewModel.analyzeApp(context, appInfo)
     }
-    
+
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -54,7 +80,7 @@ fun AppDetailScreen(
                 }
             }
         )
-        
+
         if (isLoading) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -78,34 +104,37 @@ fun AppDetailScreen(
                     item {
                         AppDetailHeader(appInfo = appInfo)
                     }
-                    
+
                     analysis?.let { appAnalysis ->
                         item {
                             AnalysisResultCard(appAnalysis = appAnalysis)
                         }
-                        
+
                         item {
                             FrameworksCard(frameworks = appAnalysis.detectedFrameworks)
                         }
-                        
+
                         if (appAnalysis.nativeLibraries.isNotEmpty()) {
                             item {
                                 NativeLibrariesCard(libraries = appAnalysis.nativeLibraries)
                             }
                         }
-                        
+
                         if (appAnalysis.usedLibraries.isNotEmpty()) {
                             item {
-                                UsedLibrariesCard(libraries = appAnalysis.usedLibraries, appType = appAnalysis.appInfo.appType)
+                                UsedLibrariesCard(
+                                    libraries = appAnalysis.usedLibraries,
+                                    appType = appAnalysis.appInfo.appType
+                                )
                             }
                         }
-                        
+
                         item {
                             PermissionsCard(permissions = appAnalysis.permissions)
                         }
                     }
                 }
-                
+
                 // Bottom Ad Banner
                 AdMobBottomBanner()
             }
@@ -140,25 +169,25 @@ fun AppDetailHeader(appInfo: AppInfo) {
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Text(
                 text = appInfo.appName,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
-            
+
             Text(
                 text = appInfo.packageName,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -174,7 +203,7 @@ fun AppDetailHeader(appInfo: AppInfo) {
                         fontWeight = FontWeight.Medium
                     )
                 }
-                
+
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "Target SDK",
@@ -187,7 +216,7 @@ fun AppDetailHeader(appInfo: AppInfo) {
                         fontWeight = FontWeight.Medium
                     )
                 }
-                
+
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "Updated",
@@ -219,9 +248,9 @@ fun AnalysisResultCard(appAnalysis: kr.bluevisor.applens.model.AppAnalysis) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -235,7 +264,7 @@ fun AnalysisResultCard(appAnalysis: kr.bluevisor.applens.model.AppAnalysis) {
                     )
                     AppTypeChip(appType = appAnalysis.appInfo.appType)
                 }
-                
+
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         text = "Confidence",
@@ -272,9 +301,9 @@ fun FrameworksCard(frameworks: List<String>) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             if (frameworks.isEmpty()) {
                 Text(
                     text = "No specific frameworks detected",
@@ -305,7 +334,7 @@ fun FrameworksCard(frameworks: List<String>) {
 @Composable
 fun NativeLibrariesCard(libraries: List<String>) {
     var isExpanded by remember { mutableStateOf(false) }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
@@ -318,11 +347,11 @@ fun NativeLibrariesCard(libraries: List<String>) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             val displayedLibraries = if (isExpanded) libraries else libraries.take(10)
-            
+
             displayedLibraries.forEach { library ->
                 Text(
                     text = library,
@@ -330,7 +359,7 @@ fun NativeLibrariesCard(libraries: List<String>) {
                     modifier = Modifier.padding(vertical = 2.dp)
                 )
             }
-            
+
             if (libraries.size > 10) {
                 TextButton(
                     onClick = { isExpanded = !isExpanded },
@@ -350,7 +379,7 @@ fun NativeLibrariesCard(libraries: List<String>) {
 @Composable
 fun PermissionsCard(permissions: List<String>) {
     var isExpanded by remember { mutableStateOf(false) }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
@@ -363,11 +392,11 @@ fun PermissionsCard(permissions: List<String>) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             val displayedPermissions = if (isExpanded) permissions else permissions.take(15)
-            
+
             displayedPermissions.forEach { permission ->
                 Text(
                     text = permission.substringAfterLast("."),
@@ -375,7 +404,7 @@ fun PermissionsCard(permissions: List<String>) {
                     modifier = Modifier.padding(vertical = 1.dp)
                 )
             }
-            
+
             if (permissions.size > 15) {
                 TextButton(
                     onClick = { isExpanded = !isExpanded },
@@ -395,7 +424,7 @@ fun PermissionsCard(permissions: List<String>) {
 @Composable
 fun UsedLibrariesCard(libraries: List<String>, appType: AppType) {
     var isExpanded by remember { mutableStateOf(false) }
-    
+
     val cardTitle = when (appType) {
         AppType.FLUTTER -> "Flutter Packages"
         AppType.REACT_NATIVE -> "React Native Libraries"
@@ -405,7 +434,7 @@ fun UsedLibrariesCard(libraries: List<String>, appType: AppType) {
         AppType.KMP -> "KMP Libraries"
         else -> "Android Libraries"
     }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
@@ -418,11 +447,11 @@ fun UsedLibrariesCard(libraries: List<String>, appType: AppType) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             val displayedLibraries = if (isExpanded) libraries else libraries.take(8)
-            
+
             displayedLibraries.forEach { library ->
                 Surface(
                     modifier = Modifier
@@ -438,7 +467,7 @@ fun UsedLibrariesCard(libraries: List<String>, appType: AppType) {
                     )
                 }
             }
-            
+
             if (libraries.size > 8) {
                 TextButton(
                     onClick = { isExpanded = !isExpanded },
@@ -458,7 +487,7 @@ fun UsedLibrariesCard(libraries: List<String>, appType: AppType) {
 @Composable
 fun ComponentsCard(title: String, components: List<String>) {
     var isExpanded by remember { mutableStateOf(false) }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
@@ -471,11 +500,11 @@ fun ComponentsCard(title: String, components: List<String>) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             val displayedComponents = if (isExpanded) components else components.take(10)
-            
+
             displayedComponents.forEach { component ->
                 Text(
                     text = component.substringAfterLast("."),
@@ -483,7 +512,7 @@ fun ComponentsCard(title: String, components: List<String>) {
                     modifier = Modifier.padding(vertical = 1.dp)
                 )
             }
-            
+
             if (components.size > 10) {
                 TextButton(
                     onClick = { isExpanded = !isExpanded },

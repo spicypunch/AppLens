@@ -8,7 +8,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.google.android.gms.ads.MobileAds
 import kr.bluevisor.applens.model.AppInfo
@@ -20,10 +24,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
+
         // Initialize AdMob
         MobileAds.initialize(this) {}
-        
+
         setContent {
             AppLensTheme {
                 Surface(
@@ -40,7 +44,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppLensApp() {
     var selectedApp by remember { mutableStateOf<AppInfo?>(null) }
-    
+
     if (selectedApp == null) {
         AppListScreen(
             onAppClick = { app ->
