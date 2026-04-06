@@ -4,10 +4,15 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.content.pm.PermissionInfo
 import android.os.Build
+import kr.bluevisor.applens.BuildConfig
 import kr.bluevisor.applens.model.AppAnalysis
 import kr.bluevisor.applens.model.AppInfo
-import kr.bluevisor.applens.model.AppType
+import kr.bluevisor.applens.model.FrameworkType
+import kr.bluevisor.applens.model.ObservedArtifact
+import kr.bluevisor.applens.model.PermissionDetails
+import kr.bluevisor.applens.model.VisibilityScope
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -24,40 +29,48 @@ class AppAnalyzer(private val context: Context) {
         }
 
         return installedApps.mapNotNull { packageInfo ->
-            try {
-                createAppInfo(packageInfo)
-            } catch (e: Exception) {
-                null
-            }
+            runCatching { createAppInfo(packageInfo) }.getOrNull()
         }.sortedBy { it.appName.lowercase() }
     }
 
-    private fun createAppInfo(packageInfo: PackageInfo): AppInfo {
-        val applicationInfo = packageInfo.applicationInfo ?: return AppInfo(
-            packageName = packageInfo.packageName,
-            appName = packageInfo.packageName,
-            icon = null,
-            versionName = packageInfo.versionName ?: "Unknown",
-            versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                packageInfo.longVersionCode
-            } else {
-                @Suppress("DEPRECATION")
-                packageInfo.versionCode.toLong()
-            },
-            installTime = packageInfo.firstInstallTime,
-            updateTime = packageInfo.lastUpdateTime,
-            appSize = 0L,
-            isSystemApp = false,
-            targetSdkVersion = 1,
-            minSdkVersion = 1
-        )
+    fun analyzeApp(appInfo: AppInfo): AppAnalysis {
+        val packageInfo = getPackageInfo(appInfo.packageName)
+        val applicationInfo = packageInfo.applicationInfo ?: error("Missing ApplicationInfo")
+        val apkSources = getApkPaths(applicationInfo).mapNotNull(::readApkSource)
+        val scanAnalysis = ArtifactAnalyzer.analyze(apkSources)
 
-        val appName = packageManager.getApplicationLabel(applicationInfo).toString()
-        val icon = try {
-            packageManager.getApplicationIcon(applicationInfo)
-        } catch (e: Exception) {
-            null
+        return AppAnalysis(
+            appInfo = appInfo,
+            framework = scanAnalysis.framework,
+            frameworkEvidence = scanAnalysis.frameworkEvidence,
+            detectedLibraries = scanAnalysis.detectedLibraries,
+            nativeLibraries = scanAnalysis.nativeLibraries,
+            permissions = ArtifactAnalyzer.mapPermissions(buildPermissionInputs(packageInfo)),
+            visibilityScope = if (BuildConfig.IS_PACKAGE_VISIBILITY_LIMITED) {
+                VisibilityScope.FILTERED
+            } else {
+                VisibilityScope.FULL_DEVICE
+            },
+            analyzedApkCount = scanAnalysis.analyzedApkCount
+        )
+    }
+
+    private fun getPackageInfo(packageName: String): PackageInfo {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS)
         }
+    }
+
+    private fun createAppInfo(packageInfo: PackageInfo): AppInfo {
+        val applicationInfo = packageInfo.applicationInfo ?: error("Missing ApplicationInfo")
+        val appName = packageManager.getApplicationLabel(applicationInfo).toString()
+        val icon = runCatching { packageManager.getApplicationIcon(applicationInfo) }.getOrNull()
 
         return AppInfo(
             packageName = packageInfo.packageName,
@@ -72,7 +85,7 @@ class AppAnalyzer(private val context: Context) {
             },
             installTime = packageInfo.firstInstallTime,
             updateTime = packageInfo.lastUpdateTime,
-            appSize = getAppSize(applicationInfo),
+            appSize = getPackagedSize(applicationInfo),
             isSystemApp = (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
             targetSdkVersion = applicationInfo.targetSdkVersion,
             minSdkVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -83,552 +96,425 @@ class AppAnalyzer(private val context: Context) {
         )
     }
 
-    private fun getAppSize(applicationInfo: ApplicationInfo): Long {
-        return try {
-            val apkFile = File(applicationInfo.publicSourceDir)
-            apkFile.length()
-        } catch (e: Exception) {
-            0L
+    private fun getPackagedSize(applicationInfo: ApplicationInfo): Long {
+        return getApkPaths(applicationInfo).sumOf { path ->
+            runCatching { File(path).length() }.getOrDefault(0L)
         }
     }
 
-    fun analyzeApp(appInfo: AppInfo): AppAnalysis {
-        val detectedFrameworks = mutableListOf<String>()
-        val nativeLibraries = mutableListOf<String>()
-        val usedLibraries = mutableListOf<String>()
-        val permissions = mutableListOf<String>()
-
-        var hasFlutterAssets = false
-        var hasReactNativeAssets = false
-        var hasXamarinAssets = false
-        var hasCordovaAssets = false
-        var hasUnityAssets = false
-
-        try {
-            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                packageManager.getPackageInfo(
-                    appInfo.packageName,
-                    PackageManager.PackageInfoFlags.of(
-                        (PackageManager.GET_PERMISSIONS or
-                                PackageManager.GET_ACTIVITIES or
-                                PackageManager.GET_SERVICES or
-                                PackageManager.GET_RECEIVERS).toLong()
-                    )
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                packageManager.getPackageInfo(
-                    appInfo.packageName,
-                    PackageManager.GET_PERMISSIONS or
-                            PackageManager.GET_ACTIVITIES or
-                            PackageManager.GET_SERVICES or
-                            PackageManager.GET_RECEIVERS
-                )
-            }
-
-            // Extract permissions
-            packageInfo.requestedPermissions?.forEach { permission ->
-                permissions.add(permission)
-            }
-
-            // Analyze APK contents
-            val apkPath = packageInfo.applicationInfo?.publicSourceDir
-            analyzeApkContents(
-                apkPath,
-                detectedFrameworks,
-                nativeLibraries,
-                usedLibraries,
-                appInfo.appType
-            ).let { analysis ->
-                hasFlutterAssets = analysis.hasFlutterAssets
-                hasReactNativeAssets = analysis.hasReactNativeAssets
-                hasXamarinAssets = analysis.hasXamarinAssets
-                hasCordovaAssets = analysis.hasCordovaAssets
-                hasUnityAssets = analysis.hasUnityAssets
-            }
-
-        } catch (e: Exception) {
-            // Handle analysis errors
-        }
-
-        val appType = determineAppType(
-            detectedFrameworks,
-            hasFlutterAssets,
-            hasReactNativeAssets,
-            hasXamarinAssets,
-            hasCordovaAssets,
-            hasUnityAssets
-        )
-
-        // Add common libraries based on app type to show more realistic results
-        addCommonLibrariesForAppType(appType, usedLibraries)
-
-        val confidence = calculateConfidence(appType, detectedFrameworks.size, usedLibraries.size)
-
-        return AppAnalysis(
-            appInfo = appInfo.copy(appType = appType),
-            detectedFrameworks = detectedFrameworks,
-            nativeLibraries = nativeLibraries,
-            usedLibraries = usedLibraries,
-            permissions = permissions,
-            hasFlutterAssets = hasFlutterAssets,
-            hasReactNativeAssets = hasReactNativeAssets,
-            hasXamarinAssets = hasXamarinAssets,
-            hasCordovaAssets = hasCordovaAssets,
-            hasUnityAssets = hasUnityAssets,
-            analysisConfidence = confidence
-        )
+    private fun getApkPaths(applicationInfo: ApplicationInfo): List<String> {
+        return buildList {
+            applicationInfo.publicSourceDir?.let(::add)
+            applicationInfo.splitPublicSourceDirs?.forEach(::add)
+        }.filter { it.isNotBlank() }.distinct()
     }
 
-    private data class ApkAnalysis(
-        val hasFlutterAssets: Boolean = false,
-        val hasReactNativeAssets: Boolean = false,
-        val hasXamarinAssets: Boolean = false,
-        val hasCordovaAssets: Boolean = false,
-        val hasUnityAssets: Boolean = false
+    private fun readApkSource(apkPath: String): ApkSource? {
+        return runCatching {
+            ZipFile(apkPath).use { zipFile ->
+                ApkSource(
+                    sourceApkOrSplit = File(apkPath).name,
+                    entryNames = zipFile.entries().asSequence().map { it.name }.toList()
+                )
+            }
+        }.getOrNull()
+    }
+
+    private fun buildPermissionInputs(packageInfo: PackageInfo): List<RequestedPermissionInput> {
+        val requestedPermissions = packageInfo.requestedPermissions.orEmpty()
+        val flags = packageInfo.requestedPermissionsFlags ?: IntArray(requestedPermissions.size)
+
+        return requestedPermissions.mapIndexed { index, permissionName ->
+            RequestedPermissionInput(
+                name = permissionName,
+                flags = flags.getOrElse(index) { 0 },
+                protectionLevel = resolveProtectionLevel(permissionName)
+            )
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun resolveProtectionLevel(permissionName: String): String {
+        return runCatching {
+            val permissionInfo = packageManager.getPermissionInfo(permissionName, 0)
+            when (permissionInfo.protectionLevel and PermissionInfo.PROTECTION_MASK_BASE) {
+                PermissionInfo.PROTECTION_NORMAL -> "normal"
+                PermissionInfo.PROTECTION_DANGEROUS -> "dangerous"
+                PermissionInfo.PROTECTION_SIGNATURE -> "signature"
+                else -> "other"
+            }
+        }.getOrDefault("unknown")
+    }
+}
+
+internal data class ApkSource(
+    val sourceApkOrSplit: String,
+    val entryNames: List<String>
+)
+
+internal data class RequestedPermissionInput(
+    val name: String,
+    val flags: Int,
+    val protectionLevel: String
+)
+
+internal data class ScanAnalysis(
+    val framework: FrameworkType,
+    val frameworkEvidence: List<ObservedArtifact>,
+    val detectedLibraries: List<ObservedArtifact>,
+    val nativeLibraries: List<ObservedArtifact>,
+    val analyzedApkCount: Int
+)
+
+internal object ArtifactAnalyzer {
+    private val flutterPackageRegex =
+        Regex("""(?:^|/)flutter_assets/packages/([^/]+)/""")
+    private val cordovaPluginRegex =
+        Regex("""assets/www/plugins/([^/]+)/""")
+    private val unityManagedRegex =
+        Regex("""assets/bin/Data/Managed/([^/]+)\.(dll|winmd)$""")
+    private val xamarinAssemblyRegex =
+        Regex("""assemblies/([^/]+)\.(dll|exe)$""")
+    private val nativeLibraryRegex =
+        Regex("""^lib/([^/]+)/([^/]+\.so)$""")
+    private val metaInfLibraryRegex =
+        Regex("""^META-INF/(?:com/)?([^/]+)/""")
+
+    private val frameworkPriority = listOf(
+        FrameworkType.FLUTTER,
+        FrameworkType.REACT_NATIVE,
+        FrameworkType.XAMARIN,
+        FrameworkType.CORDOVA,
+        FrameworkType.UNITY
     )
 
-    private fun analyzeApkContents(
-        apkPath: String?,
-        detectedFrameworks: MutableList<String>,
-        nativeLibraries: MutableList<String>,
-        usedLibraries: MutableList<String>,
-        appType: AppType
-    ): ApkAnalysis {
-        if (apkPath == null) {
-            return ApkAnalysis()
-        }
-        var hasFlutterAssets = false
-        var hasReactNativeAssets = false
-        var hasXamarinAssets = false
-        var hasCordovaAssets = false
-        var hasUnityAssets = false
+    private val reactNativePatterns = linkedMapOf(
+        "react-navigation" to listOf("react-navigation"),
+        "react-redux" to listOf("react-redux"),
+        "redux-toolkit" to listOf("@reduxjs/toolkit"),
+        "react-native-vector-icons" to listOf("react-native-vector-icons"),
+        "react-native-gesture-handler" to listOf("react-native-gesture-handler"),
+        "react-native-reanimated" to listOf("react-native-reanimated"),
+        "react-native-screens" to listOf("react-native-screens"),
+        "react-native-safe-area-context" to listOf("react-native-safe-area-context"),
+        "react-native-async-storage" to listOf("@react-native-async-storage"),
+        "react-native-camera" to listOf("react-native-camera"),
+        "react-native-image-picker" to listOf("react-native-image-picker"),
+        "react-native-webview" to listOf("react-native-webview"),
+        "react-native-maps" to listOf("react-native-maps"),
+        "react-native-firebase" to listOf("@react-native-firebase"),
+        "react-native-push-notification" to listOf("react-native-push-notification"),
+        "react-native-linear-gradient" to listOf("react-native-linear-gradient"),
+        "react-native-svg" to listOf("react-native-svg"),
+        "lottie-react-native" to listOf("lottie-react-native")
+    )
 
-        try {
-            ZipFile(apkPath).use { zipFile ->
-                val entries = zipFile.entries()
+    private val reactNativePrefixes = listOf(
+        "assets/node_modules/",
+        "assets/src/",
+        "assets/index.android.bundle/",
+        "assets/index.bundle/"
+    )
 
-                while (entries.hasMoreElements()) {
-                    val entry = entries.nextElement()
-                    val entryName = entry.name
+    private val packagedLibrariesByMetaInfPrefix = linkedMapOf(
+        "androidx.lifecycle" to "androidx.lifecycle",
+        "androidx.navigation" to "androidx.navigation",
+        "androidx.room" to "androidx.room",
+        "androidx.work" to "androidx.work",
+        "androidx.compose" to "androidx.compose",
+        "androidx.camera" to "androidx.camera",
+        "androidx.biometric" to "androidx.biometric",
+        "retrofit" to "retrofit2",
+        "okhttp" to "okhttp3",
+        "gson" to "gson",
+        "glide" to "glide",
+        "picasso" to "picasso",
+        "dagger" to "dagger",
+        "rxjava" to "rxjava"
+    )
 
-                    // Check for Flutter
-                    if (entryName.contains("flutter_assets") ||
-                        entryName.contains("libflutter.so") ||
-                        entryName.contains("isolate_snapshot_data") ||
-                        entryName.contains("kernel_blob.bin")
-                    ) {
-                        hasFlutterAssets = true
-                        if (!detectedFrameworks.contains("Flutter")) {
-                            detectedFrameworks.add("Flutter")
-                        }
-                    }
+    private val packagedLibrariesByNativeLibPrefix = linkedMapOf(
+        "libktor" to "ktor",
+        "libsqliter" to "androidx.room",
+        "libokhttp" to "okhttp3"
+    )
 
-                    // Check for React Native
-                    if (entryName.contains("assets/index.android.bundle") ||
-                        entryName.contains("libreactnativejni.so") ||
-                        entryName.contains("libhermes.so") ||
-                        entryName.contains("assets/index.bundle")
-                    ) {
-                        hasReactNativeAssets = true
-                        if (!detectedFrameworks.contains("React Native")) {
-                            detectedFrameworks.add("React Native")
-                        }
-                    }
+    fun analyze(sources: List<ApkSource>): ScanAnalysis {
+        val frameworkEvidence = frameworkPriority.associateWith { linkedMapOf<String, ObservedArtifact>() }
+        val detectedLibraries = linkedMapOf<String, ObservedArtifact>()
+        val nativeLibraries = linkedMapOf<String, ObservedArtifact>()
 
-                    // Check for Xamarin
-                    if (entryName.contains("assemblies/") ||
-                        entryName.contains("libmonodroid.so") ||
-                        entryName.contains("libxamarin-app.so")
-                    ) {
-                        hasXamarinAssets = true
-                        if (!detectedFrameworks.contains("Xamarin")) {
-                            detectedFrameworks.add("Xamarin")
-                        }
-                    }
-
-                    // Check for Cordova/PhoneGap
-                    if (entryName.contains("assets/www/") ||
-                        entryName.contains("cordova.js") ||
-                        entryName.contains("phonegap.js")
-                    ) {
-                        hasCordovaAssets = true
-                        if (!detectedFrameworks.contains("Cordova/PhoneGap")) {
-                            detectedFrameworks.add("Cordova/PhoneGap")
-                        }
-                    }
-
-                    // Check for Unity
-                    if (entryName.contains("libunity.so") ||
-                        entryName.contains("assets/bin/Data/") ||
-                        entryName.contains("libmono.so")
-                    ) {
-                        hasUnityAssets = true
-                        if (!detectedFrameworks.contains("Unity")) {
-                            detectedFrameworks.add("Unity")
-                        }
-                    }
-
-                    // Collect native libraries
-                    if (entryName.startsWith("lib/") && entryName.endsWith(".so")) {
-                        val libName = entryName.substringAfterLast("/")
-                        if (!nativeLibraries.contains(libName)) {
-                            nativeLibraries.add(libName)
-                        }
-                    }
-
-                    // Analyze libraries based on app type
-                    analyzeLibrariesByType(entryName, appType, usedLibraries)
-                }
+        sources.forEach { source ->
+            source.entryNames.forEach { entryName ->
+                collectFrameworkEvidence(frameworkEvidence, source.sourceApkOrSplit, entryName)
+                collectDetectedLibraries(detectedLibraries, source.sourceApkOrSplit, entryName)
+                collectNativeLibraries(nativeLibraries, source.sourceApkOrSplit, entryName)
             }
-        } catch (e: Exception) {
-            // Handle APK analysis errors
         }
 
-        return ApkAnalysis(
-            hasFlutterAssets,
-            hasReactNativeAssets,
-            hasXamarinAssets,
-            hasCordovaAssets,
-            hasUnityAssets
+        val framework = frameworkPriority.maxByOrNull { framework ->
+            frameworkEvidence.getValue(framework).size * 100 + (frameworkPriority.size - frameworkPriority.indexOf(framework))
+        }?.takeIf { frameworkEvidence.getValue(it).isNotEmpty() } ?: FrameworkType.UNCLASSIFIED
+
+        return ScanAnalysis(
+            framework = framework,
+            frameworkEvidence = frameworkEvidence[framework]?.values?.toList().orEmpty(),
+            detectedLibraries = detectedLibraries.values.toList(),
+            nativeLibraries = nativeLibraries.values.toList(),
+            analyzedApkCount = sources.size
         )
     }
 
-    private fun analyzeLibrariesByType(
-        entryName: String,
-        appType: AppType,
-        usedLibraries: MutableList<String>
+    fun mapPermissions(inputs: List<RequestedPermissionInput>): List<PermissionDetails> {
+        return inputs.map { input ->
+            PermissionDetails(
+                name = input.name,
+                granted = input.flags and PackageInfo.REQUESTED_PERMISSION_GRANTED != 0,
+                implicit = input.flags and PackageInfo.REQUESTED_PERMISSION_IMPLICIT != 0,
+                neverForLocation = input.flags and PackageInfo.REQUESTED_PERMISSION_NEVER_FOR_LOCATION != 0,
+                protectionLevel = input.protectionLevel
+            )
+        }.sortedBy { it.name }
+    }
+
+    private fun collectFrameworkEvidence(
+        frameworkEvidence: Map<FrameworkType, MutableMap<String, ObservedArtifact>>,
+        sourceApkOrSplit: String,
+        entryName: String
     ) {
-        // Analyze libraries based on detected framework type
         when {
-            entryName.contains("flutter_assets") || entryName.contains("libflutter.so") -> {
-                analyzeFlutterLibraries(entryName, usedLibraries)
+            entryName.contains("assets/flutter_assets/") ||
+                    entryName.contains("flutter_assets/") ||
+                    entryName.endsWith("libflutter.so") ||
+                    entryName.contains("isolate_snapshot_data") ||
+                    entryName.contains("kernel_blob.bin") -> {
+                addFrameworkEvidence(
+                    frameworkEvidence,
+                    FrameworkType.FLUTTER,
+                    sourceApkOrSplit,
+                    entryName,
+                    entryName.substringAfterLast("/")
+                )
             }
 
-            entryName.contains("index.android.bundle") || entryName.contains("libreactnativejni.so") -> {
-                analyzeReactNativeLibraries(entryName, usedLibraries)
+            entryName.contains("assets/index.android.bundle") ||
+                    entryName.contains("assets/index.bundle") ||
+                    entryName.endsWith("libreactnativejni.so") ||
+                    entryName.endsWith("libhermes.so") -> {
+                addFrameworkEvidence(
+                    frameworkEvidence,
+                    FrameworkType.REACT_NATIVE,
+                    sourceApkOrSplit,
+                    entryName,
+                    entryName.substringAfterLast("/")
+                )
             }
 
-            entryName.contains("assemblies/") || entryName.contains("libmonodroid.so") -> {
-                analyzeXamarinLibraries(entryName, usedLibraries)
+            entryName.contains("assemblies/") ||
+                    entryName.endsWith("libmonodroid.so") ||
+                    entryName.endsWith("libxamarin-app.so") -> {
+                addFrameworkEvidence(
+                    frameworkEvidence,
+                    FrameworkType.XAMARIN,
+                    sourceApkOrSplit,
+                    entryName,
+                    entryName.substringAfterLast("/")
+                )
             }
 
-            entryName.contains("assets/www/") || entryName.contains("cordova.js") -> {
-                analyzeCordovaLibraries(entryName, usedLibraries)
+            entryName.contains("assets/www/") ||
+                    entryName.endsWith("cordova.js") ||
+                    entryName.endsWith("phonegap.js") -> {
+                addFrameworkEvidence(
+                    frameworkEvidence,
+                    FrameworkType.CORDOVA,
+                    sourceApkOrSplit,
+                    entryName,
+                    entryName.substringAfterLast("/")
+                )
             }
 
-            entryName.contains("libunity.so") || entryName.contains("assets/bin/Data/") -> {
-                analyzeUnityLibraries(entryName, usedLibraries)
+            entryName.endsWith("libunity.so") ||
+                    entryName.endsWith("libil2cpp.so") ||
+                    entryName.contains("assets/bin/Data/") -> {
+                addFrameworkEvidence(
+                    frameworkEvidence,
+                    FrameworkType.UNITY,
+                    sourceApkOrSplit,
+                    entryName,
+                    entryName.substringAfterLast("/")
+                )
             }
         }
-
-        // Always analyze Android libraries for all apps
-        analyzeAndroidLibraries(entryName, usedLibraries)
-
-        // Always analyze KMP libraries as they can be in any app
-        analyzeKmpLibraries(entryName, usedLibraries)
     }
 
-    private fun analyzeFlutterLibraries(entryName: String, usedLibraries: MutableList<String>) {
-        val flutterLibraries = mapOf(
-            "http" to "assets/packages/http/",
-            "shared_preferences" to "assets/packages/shared_preferences/",
-            "path_provider" to "assets/packages/path_provider/",
-            "sqflite" to "assets/packages/sqflite/",
-            "camera" to "assets/packages/camera/",
-            "image_picker" to "assets/packages/image_picker/",
-            "url_launcher" to "assets/packages/url_launcher/",
-            "webview_flutter" to "assets/packages/webview_flutter/",
-            "firebase_core" to "assets/packages/firebase_core/",
-            "firebase_auth" to "assets/packages/firebase_auth/",
-            "cloud_firestore" to "assets/packages/cloud_firestore/",
-            "provider" to "assets/packages/provider/",
-            "bloc" to "assets/packages/bloc/",
-            "dio" to "assets/packages/dio/",
-            "get" to "assets/packages/get/",
-            "flutter_riverpod" to "assets/packages/flutter_riverpod/",
-            "go_router" to "assets/packages/go_router/"
-        )
+    private fun collectDetectedLibraries(
+        detectedLibraries: MutableMap<String, ObservedArtifact>,
+        sourceApkOrSplit: String,
+        entryName: String
+    ) {
+        flutterPackageRegex.find(entryName)?.groupValues?.get(1)?.let { packageName ->
+            putArtifactIfMissing(
+                detectedLibraries,
+                key = "flutter:$packageName",
+                artifact = ObservedArtifact(
+                    name = packageName,
+                    matchedPath = entryName,
+                    sourceApkOrSplit = sourceApkOrSplit
+                )
+            )
+        }
 
-        flutterLibraries.forEach { (libName, pattern) ->
-            if (entryName.contains(pattern) && !usedLibraries.contains(libName)) {
-                usedLibraries.add(libName)
+        xamarinAssemblyRegex.find(entryName)?.groupValues?.get(1)?.let { assemblyName ->
+            putArtifactIfMissing(
+                detectedLibraries,
+                key = "xamarin:$assemblyName",
+                artifact = ObservedArtifact(
+                    name = assemblyName,
+                    matchedPath = entryName,
+                    sourceApkOrSplit = sourceApkOrSplit
+                )
+            )
+        }
+
+        cordovaPluginRegex.find(entryName)?.groupValues?.get(1)?.let { pluginName ->
+            putArtifactIfMissing(
+                detectedLibraries,
+                key = "cordova:$pluginName",
+                artifact = ObservedArtifact(
+                    name = pluginName,
+                    matchedPath = entryName,
+                    sourceApkOrSplit = sourceApkOrSplit
+                )
+            )
+        }
+
+        unityManagedRegex.find(entryName)?.groupValues?.get(1)?.let { libraryName ->
+            putArtifactIfMissing(
+                detectedLibraries,
+                key = "unity:$libraryName",
+                artifact = ObservedArtifact(
+                    name = libraryName,
+                    matchedPath = entryName,
+                    sourceApkOrSplit = sourceApkOrSplit
+                )
+            )
+        }
+
+        reactNativePatterns.forEach { (name, patterns) ->
+            if (hasReactNativeArtifactMatch(entryName, patterns)) {
+                putArtifactIfMissing(
+                    detectedLibraries,
+                    key = "rn:$name",
+                    artifact = ObservedArtifact(
+                        name = name,
+                        matchedPath = entryName,
+                        sourceApkOrSplit = sourceApkOrSplit
+                    )
+                )
             }
+        }
+
+        resolvePackagedLibraryName(entryName)?.let { libraryName ->
+            putArtifactIfMissing(
+                detectedLibraries,
+                key = "packaged:$libraryName",
+                artifact = ObservedArtifact(
+                    name = libraryName,
+                    matchedPath = entryName,
+                    sourceApkOrSplit = sourceApkOrSplit
+                )
+            )
         }
     }
 
-    private fun analyzeReactNativeLibraries(entryName: String, usedLibraries: MutableList<String>) {
-        val rnLibraries = mapOf(
-            "react-navigation" to "react-navigation",
-            "react-redux" to "react-redux",
-            "redux-toolkit" to "@reduxjs/toolkit",
-            "react-native-vector-icons" to "react-native-vector-icons",
-            "react-native-gesture-handler" to "react-native-gesture-handler",
-            "react-native-reanimated" to "react-native-reanimated",
-            "react-native-screens" to "react-native-screens",
-            "react-native-safe-area-context" to "react-native-safe-area-context",
-            "react-native-async-storage" to "@react-native-async-storage",
-            "react-native-camera" to "react-native-camera",
-            "react-native-image-picker" to "react-native-image-picker",
-            "react-native-webview" to "react-native-webview",
-            "react-native-maps" to "react-native-maps",
-            "react-native-firebase" to "@react-native-firebase",
-            "react-native-push-notification" to "react-native-push-notification",
-            "react-native-linear-gradient" to "react-native-linear-gradient",
-            "react-native-svg" to "react-native-svg",
-            "lottie-react-native" to "lottie-react-native"
+    private fun collectNativeLibraries(
+        nativeLibraries: MutableMap<String, ObservedArtifact>,
+        sourceApkOrSplit: String,
+        entryName: String
+    ) {
+        val match = nativeLibraryRegex.find(entryName) ?: return
+        val abi = match.groupValues[1]
+        val libraryName = match.groupValues[2]
+
+        putArtifactIfMissing(
+            nativeLibraries,
+            key = "$libraryName:$abi",
+            artifact = ObservedArtifact(
+                name = libraryName,
+                matchedPath = entryName,
+                sourceApkOrSplit = sourceApkOrSplit,
+                abi = abi
+            )
         )
+    }
 
-        // Check for React Native package patterns in various locations
-        rnLibraries.forEach { (libName, pattern) ->
-            if ((entryName.contains("assets/") && entryName.contains(pattern)) ||
-                entryName.contains("node_modules/$pattern") ||
-                entryName.contains(pattern.replace("-", "_"))
-            ) {
-                if (!usedLibraries.contains(libName)) {
-                    usedLibraries.add(libName)
-                }
-            }
+    private fun addFrameworkEvidence(
+        frameworkEvidence: Map<FrameworkType, MutableMap<String, ObservedArtifact>>,
+        framework: FrameworkType,
+        sourceApkOrSplit: String,
+        entryName: String,
+        signalName: String
+    ) {
+        putArtifactIfMissing(
+            frameworkEvidence.getValue(framework),
+            key = "$signalName:$entryName",
+            artifact = ObservedArtifact(
+                name = signalName,
+                matchedPath = entryName,
+                sourceApkOrSplit = sourceApkOrSplit
+            )
+        )
+    }
+
+    private fun putArtifactIfMissing(
+        target: MutableMap<String, ObservedArtifact>,
+        key: String,
+        artifact: ObservedArtifact
+    ) {
+        if (key !in target) {
+            target[key] = artifact
         }
+    }
 
-        // Also check for common React Native native modules in lib folder
+    private fun hasReactNativeArtifactMatch(
+        entryName: String,
+        patterns: List<String>
+    ): Boolean {
         if (entryName.startsWith("lib/") && entryName.endsWith(".so")) {
-            val soFileName = entryName.substringAfterLast("/")
-            rnLibraries.forEach { (libName, _) ->
-                if (soFileName.contains(libName.replace("-", "").replace("_", "")) ||
-                    soFileName.contains("react") && soFileName.contains("native")
-                ) {
-                    if (!usedLibraries.contains(libName)) {
-                        usedLibraries.add(libName)
-                    }
-                }
+            val normalizedName = entryName.substringAfterLast("/").lowercase()
+            return patterns.any { pattern ->
+                val token = pattern.substringAfterLast("/").lowercase()
+                normalizedName.contains(token.replace("-", "").replace("_", ""))
             }
         }
+
+        return reactNativePrefixes.any { prefix -> entryName.startsWith(prefix) } &&
+            patterns.any { pattern ->
+                entryName.contains("/$pattern/") ||
+                    entryName.endsWith("/$pattern") ||
+                    entryName.contains("/${pattern.replace("-", "_")}/")
+            }
     }
 
-    private fun analyzeAndroidLibraries(entryName: String, usedLibraries: MutableList<String>) {
-        // Check META-INF for library information (more reliable)
+    private fun resolvePackagedLibraryName(entryName: String): String? {
         if (entryName.startsWith("META-INF/")) {
-            when {
-                entryName.contains("androidx.lifecycle") -> addLibraryIfNotExists(
-                    "androidx.lifecycle",
-                    usedLibraries
-                )
-
-                entryName.contains("androidx.navigation") -> addLibraryIfNotExists(
-                    "androidx.navigation",
-                    usedLibraries
-                )
-
-                entryName.contains("androidx.room") -> addLibraryIfNotExists(
-                    "androidx.room",
-                    usedLibraries
-                )
-
-                entryName.contains("androidx.work") -> addLibraryIfNotExists(
-                    "androidx.work",
-                    usedLibraries
-                )
-
-                entryName.contains("androidx.compose") -> addLibraryIfNotExists(
-                    "androidx.compose",
-                    usedLibraries
-                )
-
-                entryName.contains("androidx.camera") -> addLibraryIfNotExists(
-                    "androidx.camera",
-                    usedLibraries
-                )
-
-                entryName.contains("androidx.biometric") -> addLibraryIfNotExists(
-                    "androidx.biometric",
-                    usedLibraries
-                )
-
-                entryName.contains("retrofit") -> addLibraryIfNotExists("retrofit2", usedLibraries)
-                entryName.contains("okhttp") -> addLibraryIfNotExists("okhttp3", usedLibraries)
-                entryName.contains("gson") -> addLibraryIfNotExists("gson", usedLibraries)
-                entryName.contains("glide") -> addLibraryIfNotExists("glide", usedLibraries)
-                entryName.contains("picasso") -> addLibraryIfNotExists("picasso", usedLibraries)
-                entryName.contains("dagger") -> addLibraryIfNotExists("dagger", usedLibraries)
-                entryName.contains("rxjava") -> addLibraryIfNotExists("rxjava", usedLibraries)
-            }
+            val prefix = metaInfLibraryRegex.find(entryName)?.groupValues?.getOrNull(1) ?: return null
+            return packagedLibrariesByMetaInfPrefix[prefix]
         }
 
-        // Also check in native libraries
         if (entryName.startsWith("lib/") && entryName.endsWith(".so")) {
-            val libName = entryName.substringAfterLast("/").lowercase()
-            when {
-                libName.contains("okhttp") -> addLibraryIfNotExists("okhttp3", usedLibraries)
-                libName.contains("retrofit") -> addLibraryIfNotExists("retrofit2", usedLibraries)
-                libName.contains("glide") -> addLibraryIfNotExists("glide", usedLibraries)
-                libName.contains("picasso") -> addLibraryIfNotExists("picasso", usedLibraries)
-                libName.contains("gson") -> addLibraryIfNotExists("gson", usedLibraries)
-            }
+            val libraryName = entryName.substringAfterLast("/").substringBeforeLast(".so")
+            return packagedLibrariesByNativeLibPrefix.entries
+                .firstOrNull { (prefix, _) -> libraryName.startsWith(prefix) }
+                ?.value
         }
 
-        // Check class files in classes.dex or other locations
-        if (entryName.contains("classes") || entryName.endsWith(".dex")) {
-            // Since DEX files are binary, we can't easily parse them here
-            // This is a limitation of the current approach
-        }
-    }
-
-    private fun addLibraryIfNotExists(libName: String, usedLibraries: MutableList<String>) {
-        if (!usedLibraries.contains(libName)) {
-            usedLibraries.add(libName)
-        }
-    }
-
-    private fun analyzeXamarinLibraries(entryName: String, usedLibraries: MutableList<String>) {
-        if (entryName.startsWith("assemblies/")) {
-            val assemblyName = entryName.substringAfterLast("/").substringBeforeLast(".")
-            if (assemblyName.isNotEmpty() && !usedLibraries.contains(assemblyName)) {
-                usedLibraries.add(assemblyName)
-            }
-        }
-    }
-
-    private fun analyzeCordovaLibraries(entryName: String, usedLibraries: MutableList<String>) {
-        val cordovaPlugins = listOf(
-            "cordova-plugin-camera",
-            "cordova-plugin-file",
-            "cordova-plugin-geolocation",
-            "cordova-plugin-device",
-            "cordova-plugin-network-information",
-            "cordova-plugin-battery-status",
-            "cordova-plugin-vibration",
-            "cordova-plugin-statusbar",
-            "cordova-plugin-splashscreen"
-        )
-
-        if (entryName.contains("assets/www/plugins/")) {
-            cordovaPlugins.forEach { plugin ->
-                if (entryName.contains(plugin) && !usedLibraries.contains(plugin)) {
-                    usedLibraries.add(plugin)
-                }
-            }
-        }
-    }
-
-    private fun analyzeUnityLibraries(entryName: String, usedLibraries: MutableList<String>) {
-        if (entryName.contains("assets/bin/Data/Managed/")) {
-            val libraryName = entryName.substringAfterLast("/").substringBeforeLast(".")
-            if (libraryName.isNotEmpty() && !usedLibraries.contains(libraryName)) {
-                usedLibraries.add(libraryName)
-            }
-        }
-    }
-
-    private fun analyzeKmpLibraries(entryName: String, usedLibraries: MutableList<String>) {
-        val kmpLibraries = listOf(
-            "kotlinx.coroutines", "kotlinx.serialization", "ktor", "sqldelight",
-            "koin", "kodein", "multiplatform-settings", "kermit"
-        )
-
-        kmpLibraries.forEach { lib ->
-            if (entryName.contains(lib.replace(".", "/")) && !usedLibraries.contains(lib)) {
-                usedLibraries.add(lib)
-            }
-        }
-    }
-
-    private fun determineAppType(
-        detectedFrameworks: List<String>,
-        hasFlutterAssets: Boolean,
-        hasReactNativeAssets: Boolean,
-        hasXamarinAssets: Boolean,
-        hasCordovaAssets: Boolean,
-        hasUnityAssets: Boolean
-    ): AppType {
         return when {
-            hasFlutterAssets || detectedFrameworks.contains("Flutter") -> AppType.FLUTTER
-            hasReactNativeAssets || detectedFrameworks.contains("React Native") -> AppType.REACT_NATIVE
-            hasXamarinAssets || detectedFrameworks.contains("Xamarin") -> AppType.XAMARIN
-            hasCordovaAssets || detectedFrameworks.contains("Cordova/PhoneGap") -> AppType.CORDOVA
-            hasUnityAssets || detectedFrameworks.contains("Unity") -> AppType.UNITY
-            else -> AppType.NATIVE_ANDROID
-        }
-    }
-
-    private fun addCommonLibrariesForAppType(appType: AppType, usedLibraries: MutableList<String>) {
-        when (appType) {
-            AppType.FLUTTER -> {
-                val commonFlutterLibs = listOf("http", "shared_preferences", "path_provider")
-                commonFlutterLibs.forEach { lib ->
-                    addLibraryIfNotExists(lib, usedLibraries)
-                }
-            }
-
-            AppType.REACT_NATIVE -> {
-                val commonRNLibs = listOf(
-                    "react-navigation",
-                    "react-native-vector-icons",
-                    "react-native-gesture-handler"
-                )
-                commonRNLibs.forEach { lib ->
-                    addLibraryIfNotExists(lib, usedLibraries)
-                }
-            }
-
-            AppType.NATIVE_ANDROID -> {
-                val commonAndroidLibs =
-                    listOf("androidx.lifecycle", "androidx.navigation", "retrofit2")
-                commonAndroidLibs.forEach { lib ->
-                    addLibraryIfNotExists(lib, usedLibraries)
-                }
-            }
-
-            AppType.XAMARIN -> {
-                val commonXamarinLibs =
-                    listOf("Xamarin.Android", "Xamarin.Forms", "Newtonsoft.Json")
-                commonXamarinLibs.forEach { lib ->
-                    addLibraryIfNotExists(lib, usedLibraries)
-                }
-            }
-
-            AppType.CORDOVA -> {
-                val commonCordovaLibs =
-                    listOf("cordova-plugin-device", "cordova-plugin-camera", "cordova-plugin-file")
-                commonCordovaLibs.forEach { lib ->
-                    addLibraryIfNotExists(lib, usedLibraries)
-                }
-            }
-
-            AppType.UNITY -> {
-                val commonUnityLibs = listOf("UnityEngine", "Unity.Ads", "Unity.Analytics")
-                commonUnityLibs.forEach { lib ->
-                    addLibraryIfNotExists(lib, usedLibraries)
-                }
-            }
-
-            AppType.KMP -> {
-                val commonKmpLibs = listOf("kotlinx.coroutines", "kotlinx.serialization", "ktor")
-                commonKmpLibs.forEach { lib ->
-                    addLibraryIfNotExists(lib, usedLibraries)
-                }
-            }
-
-            else -> {
-                // For unknown types, add some common Android libraries
-                val commonLibs = listOf("androidx.lifecycle", "okhttp3")
-                commonLibs.forEach { lib ->
-                    addLibraryIfNotExists(lib, usedLibraries)
-                }
-            }
-        }
-    }
-
-    private fun calculateConfidence(
-        appType: AppType,
-        frameworkCount: Int,
-        libraryCount: Int
-    ): Float {
-        return when {
-            appType != AppType.UNKNOWN && frameworkCount > 0 -> 0.9f
-            appType != AppType.UNKNOWN -> 0.7f
-            libraryCount > 0 -> 0.5f
-            else -> 0.2f
+            entryName.startsWith("kotlinx/coroutines/") -> "kotlinx.coroutines"
+            entryName.startsWith("kotlinx/serialization/") -> "kotlinx.serialization"
+            entryName.startsWith("io/ktor/") -> "ktor"
+            else -> null
         }
     }
 }

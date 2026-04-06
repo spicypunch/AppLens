@@ -44,13 +44,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
-import androidx.lifecycle.viewmodel.compose.viewModel
+import kr.bluevisor.applens.model.AnalysisStatus
+import kr.bluevisor.applens.model.AppAnalysisState
 import kr.bluevisor.applens.model.AppInfo
-import kr.bluevisor.applens.model.AppType
+import kr.bluevisor.applens.model.FrameworkType
+import kr.bluevisor.applens.model.analysisCacheKey
+import kr.bluevisor.applens.ui.presentation.displayLabel
+import kr.bluevisor.applens.ui.presentation.listChipLabelFor
 import kr.bluevisor.applens.ui.components.AdMobBottomBanner
 import kr.bluevisor.applens.ui.components.AppCountIndicator
 import kr.bluevisor.applens.ui.components.SearchAndFilterBar
-import kr.bluevisor.applens.viewmodel.AppListViewModel
+import kr.bluevisor.applens.viewmodel.AppLensViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -58,8 +62,8 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppListScreen(
-    onAppClick: (AppInfo) -> Unit,
-    viewModel: AppListViewModel = viewModel()
+    viewModel: AppLensViewModel,
+    onAppClick: (AppInfo) -> Unit
 ) {
     val context = LocalContext.current
     val apps by viewModel.apps.collectAsState()
@@ -67,15 +71,14 @@ fun AppListScreen(
     val filterState by viewModel.filterState.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val scrollPosition by viewModel.scrollPosition.collectAsState()
+    val analysisStates by viewModel.analysisStates.collectAsState()
 
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = scrollPosition
     )
 
     LaunchedEffect(context) {
-        if (allApps.isEmpty() && !isLoading) {
-            viewModel.loadApps(context)
-        }
+        viewModel.loadApps()
     }
 
     DisposableEffect(Unit) {
@@ -84,9 +87,7 @@ fun AppListScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
             title = {
                 Text(
@@ -104,7 +105,13 @@ fun AppListScreen(
                 CircularProgressIndicator()
             }
         } else {
-            Column {
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (viewModel.isPackageVisibilityLimited) {
+                    PackageVisibilityNotice(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+
                 SearchAndFilterBar(
                     filterState = filterState,
                     onSearchQueryChange = viewModel::updateSearchQuery,
@@ -117,21 +124,39 @@ fun AppListScreen(
                     filteredCount = apps.size
                 )
 
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(apps) { app ->
-                        AppListItem(
-                            app = app,
-                            onClick = { onAppClick(app) }
+                if (apps.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No visible apps found for this build.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(
+                            items = apps,
+                            key = { it.analysisCacheKey() }
+                        ) { app ->
+                            AppListItem(
+                                app = app,
+                                analysisState = analysisStates[app.analysisCacheKey()],
+                                onClick = { onAppClick(app) }
+                            )
+                        }
                     }
                 }
 
-                // Bottom Ad Banner
                 AdMobBottomBanner()
             }
         }
@@ -141,12 +166,13 @@ fun AppListScreen(
 @Composable
 fun AppListItem(
     app: AppInfo,
+    analysisState: AppAnalysisState?,
     onClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
+            .clickable(onClick = onClick),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -156,11 +182,10 @@ fun AppListItem(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // App Icon
             if (app.icon != null) {
                 Image(
                     bitmap = app.icon.toBitmap(48, 48).asImageBitmap(),
-                    contentDescription = "App Icon",
+                    contentDescription = "App icon",
                     modifier = Modifier
                         .size(48.dp)
                         .clip(RoundedCornerShape(8.dp))
@@ -168,7 +193,7 @@ fun AppListItem(
             } else {
                 Icon(
                     imageVector = Icons.Default.Info,
-                    contentDescription = "Default App Icon",
+                    contentDescription = "Default app icon",
                     modifier = Modifier.size(48.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
@@ -176,10 +201,7 @@ fun AppListItem(
 
             Spacer(modifier = Modifier.width(16.dp))
 
-            // App Info
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = app.appName,
                     style = MaterialTheme.typography.titleMedium,
@@ -200,12 +222,24 @@ fun AppListItem(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    AppTypeChip(appType = app.appType)
+                    val chipLabel = listChipLabelFor(analysisState)
+                    if (chipLabel != null) {
+                        if (analysisState?.status == AnalysisStatus.READY) {
+                            FrameworkChip(framework = analysisState.analysis!!.framework)
+                        } else {
+                            NeutralStatusChip(label = chipLabel)
+                        }
+                    }
 
                     if (app.isSystemApp) {
                         AssistChip(
-                            onClick = { },
-                            label = { Text("System", style = MaterialTheme.typography.labelSmall) },
+                            onClick = {},
+                            label = {
+                                Text(
+                                    text = "System",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            },
                             colors = AssistChipDefaults.assistChipColors(
                                 containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f)
                             )
@@ -214,10 +248,7 @@ fun AppListItem(
                 }
             }
 
-            // Version and Date
-            Column(
-                horizontalAlignment = Alignment.End
-            ) {
+            Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = app.versionName,
                     style = MaterialTheme.typography.bodySmall,
@@ -235,32 +266,62 @@ fun AppListItem(
 }
 
 @Composable
-fun AppTypeChip(appType: AppType) {
-    val (text, color) = when (appType) {
-        AppType.FLUTTER -> "Flutter" to Color(0xFF0175C2)
-        AppType.REACT_NATIVE -> "React Native" to Color(0xFF61DAFB)
-        AppType.XAMARIN -> "Xamarin" to Color(0xFF3498DB)
-        AppType.CORDOVA -> "Cordova" to Color(0xFFE44D26)
-        AppType.IONIC -> "Ionic" to Color(0xFF4C8DFF)
-        AppType.NATIVE_ANDROID -> "Native" to Color(0xFF3DDC84)
-        AppType.KMP -> "KMP" to Color(0xFF7F52FF)
-        AppType.UNITY -> "Unity" to Color(0xFF000000)
-        AppType.UNKNOWN -> "Unknown" to Color(0xFF757575)
+fun FrameworkChip(framework: FrameworkType) {
+    val (color, textColor) = when (framework) {
+        FrameworkType.FLUTTER -> Color(0xFF0175C2) to Color.White
+        FrameworkType.REACT_NATIVE -> Color(0xFF61DAFB) to Color.Black
+        FrameworkType.XAMARIN -> Color(0xFF3498DB) to Color.White
+        FrameworkType.CORDOVA -> Color(0xFFE44D26) to Color.White
+        FrameworkType.UNITY -> Color(0xFF111111) to Color.White
+        FrameworkType.UNCLASSIFIED -> Color(0xFF3DDC84) to Color.Black
     }
 
     AssistChip(
-        onClick = { },
+        onClick = {},
         label = {
             Text(
-                text = text,
+                text = framework.displayLabel(),
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White
+                color = textColor
             )
         },
         colors = AssistChipDefaults.assistChipColors(
             containerColor = color
         )
     )
+}
+
+@Composable
+fun NeutralStatusChip(label: String) {
+    AssistChip(
+        onClick = {},
+        label = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall
+            )
+        },
+        colors = AssistChipDefaults.assistChipColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    )
+}
+
+@Composable
+fun PackageVisibilityNotice(modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Text(
+            text = "This build can analyze only the apps visible under Android package visibility policies.",
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer
+        )
+    }
 }
 
 private fun formatDate(timestamp: Long): String {

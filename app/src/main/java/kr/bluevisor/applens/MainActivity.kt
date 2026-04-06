@@ -9,23 +9,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.android.gms.ads.MobileAds
-import kr.bluevisor.applens.model.AppInfo
 import kr.bluevisor.applens.ui.screen.AppDetailScreen
 import kr.bluevisor.applens.ui.screen.AppListScreen
 import kr.bluevisor.applens.ui.theme.AppLensTheme
+import kr.bluevisor.applens.viewmodel.AppLensViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Initialize AdMob
         MobileAds.initialize(this) {}
 
         setContent {
@@ -42,24 +40,20 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppLensApp() {
-    var selectedApp by remember { mutableStateOf<AppInfo?>(null) }
+fun AppLensApp(viewModel: AppLensViewModel = viewModel()) {
+    val selectedApp by viewModel.selectedApp.collectAsState()
 
     if (selectedApp == null) {
         AppListScreen(
-            onAppClick = { app ->
-                selectedApp = app
-            }
+            viewModel = viewModel,
+            onAppClick = viewModel::selectApp
         )
     } else {
-        BackHandler {
-            selectedApp = null
-        }
+        BackHandler(onBack = viewModel::clearSelection)
         AppDetailScreen(
             appInfo = selectedApp!!,
-            onBackClick = {
-                selectedApp = null
-            }
+            viewModel = viewModel,
+            onBackClick = viewModel::clearSelection
         )
     }
 }

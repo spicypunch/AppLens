@@ -1,15 +1,15 @@
 # AppLens 🔍
 
-**Analyze and explore your Android apps like never before**
+**Inspect packaged artifacts from the apps installed on your device**
 
-AppLens is a powerful Android application analyzer that provides detailed insights into installed applications on your device. Whether you're a developer, security researcher, or just curious about your apps, AppLens gives you comprehensive information about app architecture, libraries, and technical details.
+AppLens is an Android application analyzer focused on verified packaged artifacts. It inspects the APKs that are visible to the current build, reports the framework evidence it can actually see, and lists observed packaged libraries, native shared objects, and manifest permissions without inventing missing data.
 
 ## 🚀 Features
 
-### 📱 **Comprehensive App Analysis**
-- **App Type Detection**: Automatically identifies Flutter, React Native, Xamarin, Cordova, Unity, and Native Android apps
-- **Library Discovery**: Detects and lists all libraries and frameworks used in each application
-- **Enhanced Detection**: Improved library analysis that goes beyond basic scanning to identify specific frameworks and dependencies
+### 📱 **Evidence-Based App Analysis**
+- **Framework Evidence Detection**: Identifies Flutter, React Native, Xamarin, Cordova, and Unity only when strong packaged evidence is present
+- **Observed Library Discovery**: Lists only the packaged libraries and artifacts that are directly observed inside APK files
+- **Native Shared Object Inspection**: Aggregates `.so` files across base and split APKs with ABI-aware deduplication
 
 ### 🎯 **Smart Filtering & Search**
 - **Dual App Categories**: Easily switch between "App Apps" (downloaded applications) and "User Apps" (system applications)
@@ -17,10 +17,10 @@ AppLens is a powerful Android application analyzer that provides detailed insigh
 - **Smart Sorting**: Sort applications by name, installation date, or app type
 
 ### 📊 **Detailed App Information**
-- Application metadata (version, target SDK, permissions)
-- Package information and signing details
-- Comprehensive library and framework analysis
-- App type classification with technical insights
+- Application metadata (version, target SDK, packaged APK size)
+- Framework evidence and classification summary
+- Observed packaged libraries and native shared objects
+- Manifest permissions with grant and flag details
 
 ### 🎨 **Modern UI/UX**
 - Clean, intuitive Material Design 3 interface
@@ -31,13 +31,11 @@ AppLens is a powerful Android application analyzer that provides detailed insigh
 ## 🆕 Release Notes - v1.0
 
 ### ✨ **New Features**
-- **Complete App Analysis Engine**: Built from ground up to provide accurate app type detection and library identification
-- **Advanced Library Detection**: Supports detection of 50+ popular libraries and frameworks including:
-  - Frontend frameworks (React Native, Flutter, Cordova)
-  - Game engines (Unity, Unreal Engine)
-  - Cross-platform solutions (Xamarin, Ionic)
-  - Native Android libraries (OkHttp, Retrofit, Glide, etc.)
-  - Popular third-party SDKs
+- **Verified Artifact Analysis Engine**: Reports only the framework and library evidence that can be backed by packaged APK contents
+- **Split APK Support**: Scans the base APK plus visible split APKs to improve packaged library and native shared object coverage
+- **Dual Distribution Modes**:
+  - `internal`: full-device visibility for internal and sideloaded builds
+  - `play`: Android package visibility-safe mode for public distribution
 
 - **Intelligent App Categorization**: 
   - Automatically separates user-installed apps from system apps
@@ -50,10 +48,9 @@ AppLens is a powerful Android application analyzer that provides detailed insigh
   - Smooth navigation between app list and detailed views
 
 ### 🛠 **Technical Improvements**
-- **Optimized Performance**: Efficient APK analysis with minimal memory footprint
-- **Accurate Detection**: Improved algorithm for detecting app frameworks and libraries
-- **Security Focused**: Safe analysis methods that respect app sandboxing
-- **Modern Architecture**: Built with Jetpack Compose and modern Android development practices
+- **No Synthetic Results**: The app no longer fills in guessed frameworks or default library lists without evidence
+- **Visibility-Aware Results**: Analysis explicitly reflects the package visibility constraints of the current build
+- **Modern Architecture**: Built with Jetpack Compose and activity-scoped state management
 
 ### 🎨 **Design & User Experience**
 - **Material Design 3**: Latest design system implementation
@@ -67,7 +64,9 @@ AppLens is a powerful Android application analyzer that provides detailed insigh
 - Internet connection for ads (optional)
 
 ## 🔧 **Installation**
-1. Download the APK from the releases section
+1. Choose the appropriate build from the releases section
+   - `internal` for maximum app visibility in internal/sideloaded use
+   - `play` for package-visibility-safe public distribution
 2. Enable "Install from unknown sources" in your device settings
 3. Install the APK file
 4. Grant necessary permissions when prompted
@@ -86,23 +85,22 @@ AppLens is a powerful Android application analyzer that provides detailed insigh
 - **Students** - Learn about different mobile development frameworks in real-world applications
 
 ## 🔍 **Use Cases**
-- **Framework Research**: Discover which development frameworks popular apps use
-- **Security Analysis**: Identify libraries that might have known vulnerabilities
-- **Competitive Analysis**: Understand the technical stack of competitor applications
-- **Learning Tool**: Study real-world implementations of different mobile technologies
-- **App Management**: Get detailed information about installed applications
+- **Framework Research**: Inspect packaged framework evidence in real-world Android apps
+- **Security Analysis**: Review packaged libraries and manifest permissions without synthetic guesses
+- **Competitive Analysis**: Compare the observable packaged stack of comparable applications
+- **Learning Tool**: Study how different app frameworks surface in shipped Android packages
+- **App Inventory**: Review visible installed apps under the current distribution mode
 
 ## 📈 **Performance**
-- **Fast Analysis**: Complete app scan in under 3 seconds
-- **Low Memory Usage**: Optimized to use minimal device resources
-- **Battery Efficient**: Designed to have minimal impact on battery life
+- **Lazy Analysis**: App details are analyzed on demand and cached in memory for the current session
+- **Low Memory Usage**: Packaged artifact scans are scoped to the selected app
 - **Offline Capable**: Core functionality works without internet connection
 
 ## 🛡 **Privacy & Security**
-- **No Data Collection**: AppLens does not collect or transmit any personal data
-- **Local Analysis**: All app analysis is performed locally on your device
-- **Minimal Permissions**: Only requests permissions necessary for core functionality
-- **Safe Scanning**: Uses Android's public APIs for safe app information retrieval
+- **No Data Collection**: AppLens does not collect or transmit personal data
+- **Local Analysis**: All artifact inspection runs locally on your device
+- **Visibility Respecting**: Public builds clearly communicate Android package visibility limits
+- **Safe Scanning**: Uses Android's public APIs and packaged APK contents only
 
 ## 🤝 **Contributing**
 We welcome contributions! Please feel free to submit issues, feature requests, or pull requests.

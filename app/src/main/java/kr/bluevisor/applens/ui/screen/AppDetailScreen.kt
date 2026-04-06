@@ -12,15 +12,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,18 +41,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
-import androidx.lifecycle.viewmodel.compose.viewModel
+import kr.bluevisor.applens.model.AnalysisStatus
+import kr.bluevisor.applens.model.AppAnalysis
 import kr.bluevisor.applens.model.AppInfo
-import kr.bluevisor.applens.model.AppType
+import kr.bluevisor.applens.model.ObservedArtifact
+import kr.bluevisor.applens.model.PermissionDetails
+import kr.bluevisor.applens.model.VisibilityScope
+import kr.bluevisor.applens.model.analysisCacheKey
 import kr.bluevisor.applens.ui.components.AdMobBottomBanner
-import kr.bluevisor.applens.viewmodel.AppDetailViewModel
+import kr.bluevisor.applens.viewmodel.AppLensViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -58,85 +63,117 @@ import java.util.Locale
 @Composable
 fun AppDetailScreen(
     appInfo: AppInfo,
-    onBackClick: () -> Unit,
-    viewModel: AppDetailViewModel = viewModel()
+    viewModel: AppLensViewModel,
+    onBackClick: () -> Unit
 ) {
-    val context = LocalContext.current
-    val analysis by viewModel.analysis.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
+    val analysisStates by viewModel.analysisStates.collectAsState()
+    val analysisState = analysisStates[appInfo.analysisCacheKey()]
 
-    LaunchedEffect(appInfo) {
-        viewModel.analyzeApp(context, appInfo)
+    LaunchedEffect(appInfo.analysisCacheKey()) {
+        viewModel.ensureAnalysis(appInfo)
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text("App Details") },
             navigationIcon = {
                 IconButton(onClick = onBackClick) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
             }
         )
 
-        if (isLoading) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally
+        when (analysisState?.status) {
+            null, AnalysisStatus.NOT_ANALYZED, AnalysisStatus.ANALYZING -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator()
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Analyzing app...")
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Inspecting packaged artifacts...")
+                    }
                 }
             }
-        } else {
-            Column {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    item {
-                        AppDetailHeader(appInfo = appInfo)
+
+            AnalysisStatus.FAILED -> {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (viewModel.isPackageVisibilityLimited) {
+                        PackageVisibilityNotice(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
                     }
 
-                    analysis?.let { appAnalysis ->
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        item { AppDetailHeader(appInfo) }
                         item {
-                            AnalysisResultCard(appAnalysis = appAnalysis)
+                            AnalysisErrorCard(
+                                message = analysisState.errorMessage ?: "Analysis failed"
+                            )
                         }
+                    }
 
-                        item {
-                            FrameworksCard(frameworks = appAnalysis.detectedFrameworks)
-                        }
+                    AdMobBottomBanner()
+                }
+            }
 
-                        if (appAnalysis.nativeLibraries.isNotEmpty()) {
+            AnalysisStatus.READY -> {
+                val analysis = analysisState.analysis!!
+
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (viewModel.isPackageVisibilityLimited) {
+                        PackageVisibilityNotice(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        item { AppDetailHeader(appInfo) }
+                        item { AnalysisSummaryCard(analysis) }
+
+                        if (analysis.frameworkEvidence.isNotEmpty()) {
                             item {
-                                NativeLibrariesCard(libraries = appAnalysis.nativeLibraries)
+                                ObservedArtifactsCard(
+                                    title = "Framework Evidence",
+                                    artifacts = analysis.frameworkEvidence
+                                )
                             }
                         }
 
-                        if (appAnalysis.usedLibraries.isNotEmpty()) {
+                        if (analysis.detectedLibraries.isNotEmpty()) {
                             item {
-                                UsedLibrariesCard(
-                                    libraries = appAnalysis.usedLibraries,
-                                    appType = appAnalysis.appInfo.appType
+                                ObservedArtifactsCard(
+                                    title = "Observed Packaged Libraries",
+                                    artifacts = analysis.detectedLibraries
+                                )
+                            }
+                        }
+
+                        if (analysis.nativeLibraries.isNotEmpty()) {
+                            item {
+                                ObservedArtifactsCard(
+                                    title = "Native Shared Objects",
+                                    artifacts = analysis.nativeLibraries
                                 )
                             }
                         }
 
                         item {
-                            PermissionsCard(permissions = appAnalysis.permissions)
+                            PermissionsCard(permissions = analysis.permissions)
                         }
                     }
-                }
 
-                // Bottom Ad Banner
-                AdMobBottomBanner()
+                    AdMobBottomBanner()
+                }
             }
         }
     }
@@ -149,14 +186,15 @@ fun AppDetailHeader(appInfo: AppInfo) {
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // App Icon
             if (appInfo.icon != null) {
                 Image(
                     bitmap = appInfo.icon.toBitmap(80, 80).asImageBitmap(),
-                    contentDescription = "App Icon",
+                    contentDescription = "App icon",
                     modifier = Modifier
                         .size(80.dp)
                         .clip(RoundedCornerShape(16.dp))
@@ -164,7 +202,7 @@ fun AppDetailHeader(appInfo: AppInfo) {
             } else {
                 Icon(
                     imageVector = Icons.Default.Info,
-                    contentDescription = "Default App Icon",
+                    contentDescription = "Default app icon",
                     modifier = Modifier.size(80.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
@@ -174,6 +212,7 @@ fun AppDetailHeader(appInfo: AppInfo) {
 
             Text(
                 text = appInfo.appName,
+                modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
@@ -181,6 +220,9 @@ fun AppDetailHeader(appInfo: AppInfo) {
 
             Text(
                 text = appInfo.packageName,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 320.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -189,62 +231,38 @@ fun AppDetailHeader(appInfo: AppInfo) {
             Spacer(modifier = Modifier.height(16.dp))
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "Version",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = appInfo.versionName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "Target SDK",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = appInfo.targetSdkVersion.toString(),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "Updated",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = formatFullDate(appInfo.updateTime),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+                SummaryStat(
+                    modifier = Modifier.weight(1f),
+                    label = "Version",
+                    value = appInfo.versionName
+                )
+                SummaryStat(
+                    modifier = Modifier.weight(1f),
+                    label = "Target SDK",
+                    value = appInfo.targetSdkVersion.toString()
+                )
+                SummaryStat(
+                    modifier = Modifier.weight(1f),
+                    label = "Updated",
+                    value = formatFullDate(appInfo.updateTime)
+                )
             }
         }
     }
 }
 
 @Composable
-fun AnalysisResultCard(appAnalysis: kr.bluevisor.applens.model.AppAnalysis) {
+fun AnalysisSummaryCard(appAnalysis: AppAnalysis) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "Analysis Result",
+                text = "Analysis Summary",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -253,122 +271,221 @@ fun AnalysisResultCard(appAnalysis: kr.bluevisor.applens.model.AppAnalysis) {
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.Start
+                ) {
                     Text(
-                        text = "App Type",
+                        text = "Detected stack",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    AppTypeChip(appType = appAnalysis.appInfo.appType)
+                    FrameworkChip(framework = appAnalysis.framework)
                 }
+            }
 
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Confidence",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "${(appAnalysis.analysisConfidence * 100).toInt()}%",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = when {
-                            appAnalysis.analysisConfidence >= 0.8f -> Color(0xFF4CAF50)
-                            appAnalysis.analysisConfidence >= 0.6f -> Color(0xFFFF9800)
-                            else -> Color(0xFFF44336)
-                        }
-                    )
-                }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                SummaryStat(
+                    label = "Visibility",
+                    value = visibilityScopeLabel(appAnalysis.visibilityScope)
+                )
+                SummaryStat(
+                    label = "APKs analyzed",
+                    value = appAnalysis.analyzedApkCount.toString()
+                )
             }
         }
     }
 }
 
 @Composable
-fun FrameworksCard(frameworks: List<String>) {
+fun SummaryStat(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = label,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+fun AnalysisErrorCard(message: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Analysis failed",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+}
+
+@Composable
+fun ObservedArtifactsCard(
+    title: String,
+    artifacts: List<ObservedArtifact>
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+    val displayedArtifacts = if (isExpanded) artifacts else artifacts.take(8)
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "Detected Frameworks",
+                text = "$title (${artifacts.size})",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (frameworks.isEmpty()) {
-                Text(
-                    text = "No specific frameworks detected",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                frameworks.forEach { framework ->
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
+            displayedArtifacts.forEach { artifact ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = framework,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            style = MaterialTheme.typography.bodyMedium
+                            text = artifactLabel(artifact),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = artifact.matchedPath,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Text(
+                            text = "Source: ${artifact.sourceApkOrSplit}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                     }
                 }
             }
+
+            if (artifacts.size > 8) {
+                TextButton(
+                    onClick = { isExpanded = !isExpanded },
+                    modifier = Modifier.padding(top = 4.dp)
+                ) {
+                    Text(
+                        text = if (isExpanded) "Show less" else "... and ${artifacts.size - 8} more"
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-fun NativeLibrariesCard(libraries: List<String>) {
+fun PermissionsCard(permissions: List<PermissionDetails>) {
     var isExpanded by remember { mutableStateOf(false) }
+    val displayedPermissions = if (isExpanded) permissions else permissions.take(10)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "Native Libraries (${libraries.size})",
+                text = "Manifest Permissions (${permissions.size})",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            val displayedLibraries = if (isExpanded) libraries else libraries.take(10)
-
-            displayedLibraries.forEach { library ->
+            if (permissions.isEmpty()) {
                 Text(
-                    text = library,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(vertical = 2.dp)
+                    text = "No manifest permissions requested.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else {
+                displayedPermissions.forEach { permission ->
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = permission.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                PermissionFlagChip(
+                                    label = if (permission.granted) "Granted" else "Not granted"
+                                )
+                                if (permission.implicit) {
+                                    PermissionFlagChip(label = "Implicit")
+                                }
+                                if (permission.neverForLocation) {
+                                    PermissionFlagChip(label = "Never for location")
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Protection: ${permission.protectionLevel}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
 
-            if (libraries.size > 10) {
+            if (permissions.size > 10) {
                 TextButton(
                     onClick = { isExpanded = !isExpanded },
-                    modifier = Modifier.padding(vertical = 4.dp)
+                    modifier = Modifier.padding(top = 4.dp)
                 ) {
                     Text(
-                        text = if (isExpanded) "Show less" else "... and ${libraries.size - 10} more",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
+                        text = if (isExpanded) "Show less" else "... and ${permissions.size - 10} more"
                     )
                 }
             }
@@ -377,155 +494,26 @@ fun NativeLibrariesCard(libraries: List<String>) {
 }
 
 @Composable
-fun PermissionsCard(permissions: List<String>) {
-    var isExpanded by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(
-                text = "Permissions (${permissions.size})",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            val displayedPermissions = if (isExpanded) permissions else permissions.take(15)
-
-            displayedPermissions.forEach { permission ->
-                Text(
-                    text = permission.substringAfterLast("."),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(vertical = 1.dp)
-                )
-            }
-
-            if (permissions.size > 15) {
-                TextButton(
-                    onClick = { isExpanded = !isExpanded },
-                    modifier = Modifier.padding(vertical = 4.dp)
-                ) {
-                    Text(
-                        text = if (isExpanded) "Show less" else "... and ${permissions.size - 15} more",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-    }
+fun PermissionFlagChip(label: String) {
+    FilterChip(
+        selected = true,
+        onClick = {},
+        label = { Text(label) },
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+    )
 }
 
-@Composable
-fun UsedLibrariesCard(libraries: List<String>, appType: AppType) {
-    var isExpanded by remember { mutableStateOf(false) }
-
-    val cardTitle = when (appType) {
-        AppType.FLUTTER -> "Flutter Packages"
-        AppType.REACT_NATIVE -> "React Native Libraries"
-        AppType.XAMARIN -> "Xamarin Assemblies"
-        AppType.CORDOVA -> "Cordova Plugins"
-        AppType.UNITY -> "Unity Libraries"
-        AppType.KMP -> "KMP Libraries"
-        else -> "Android Libraries"
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(
-                text = "$cardTitle (${libraries.size})",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            val displayedLibraries = if (isExpanded) libraries else libraries.take(8)
-
-            displayedLibraries.forEach { library ->
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Text(
-                        text = library,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-
-            if (libraries.size > 8) {
-                TextButton(
-                    onClick = { isExpanded = !isExpanded },
-                    modifier = Modifier.padding(vertical = 4.dp)
-                ) {
-                    Text(
-                        text = if (isExpanded) "Show less" else "... and ${libraries.size - 8} more",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-    }
+private fun artifactLabel(artifact: ObservedArtifact): String {
+    return artifact.abi?.let { "${artifact.name} ($it)" } ?: artifact.name
 }
 
-@Composable
-fun ComponentsCard(title: String, components: List<String>) {
-    var isExpanded by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(
-                text = "$title (${components.size})",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            val displayedComponents = if (isExpanded) components else components.take(10)
-
-            displayedComponents.forEach { component ->
-                Text(
-                    text = component.substringAfterLast("."),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(vertical = 1.dp)
-                )
-            }
-
-            if (components.size > 10) {
-                TextButton(
-                    onClick = { isExpanded = !isExpanded },
-                    modifier = Modifier.padding(vertical = 4.dp)
-                ) {
-                    Text(
-                        text = if (isExpanded) "Show less" else "... and ${components.size - 10} more",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
+private fun visibilityScopeLabel(scope: VisibilityScope): String {
+    return when (scope) {
+        VisibilityScope.FULL_DEVICE -> "Full"
+        VisibilityScope.FILTERED -> "Filtered"
     }
 }
 

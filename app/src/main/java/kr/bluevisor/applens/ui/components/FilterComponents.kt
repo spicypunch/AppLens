@@ -162,7 +162,7 @@ private fun getSortOrderLabel(sortOrder: SortOrder): String {
         SortOrder.INSTALL_DATE_ASC -> "Oldest First"
         SortOrder.INSTALL_DATE_DESC -> "Newest First"
         SortOrder.UPDATE_DATE_DESC -> "Recently Updated"
-        SortOrder.SIZE_DESC -> "Size (Large)"
+        SortOrder.SIZE_DESC -> "APK Size (Large)"
     }
 }
 
